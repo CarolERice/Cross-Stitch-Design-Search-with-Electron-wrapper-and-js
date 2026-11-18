@@ -5,14 +5,16 @@ import difflib
 import os
 from django.conf import settings
 from django.shortcuts import render
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.http import HttpRequest, HttpResponse, JsonResponse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
   sys.path.insert(0, str(BASE_DIR))
 
 from project import web_search
+
+def index(request: HttpRequest):
+    return render(request, 'search_app/index.html')
 
 # read and map the current wips.csv file to get a lookup of who has each design of those that are currently in progress. This is used to display the "Who has it" field in the search results.
 # open the fire read only if it exists, otherwise return an empty lookup
@@ -64,14 +66,14 @@ def find_stitcher(project_name: str | bool | None, lookup: dict[str, str]) -> st
 
     return ""
 
-# Django view to handle search requests. It retrieves query parameters from the request, performs a search using the web_search function, and filters results based on additional criteria such as finished status, date, priority, and assigned stitcher. The results are then rendered in the 'search_app/index.html' template along with any error messages.
-# Get query parameters from the request, including 'q' for the search query, 'finished' for finished status, 'date' for filtering by date, 'priority' for sorting preference, 'assigned' for filtering by assignment status, and 'stitcher' for filtering by stitcher name. If both date and priority are specified, an error message is generated. The search results are filtered based on the provided criteria, and the final results are passed to the template for rendering.
-# validate the query parameters and handle any errors. Some combinations of parameters may not be valid, such as specifying both a date and a priority. In such cases, an error message is generated and displayed to the user. The search results are filtered based on the provided criteria, including finished status, date, priority, assignment status, and stitcher name. The final results are passed to the template for rendering along with any error messages.
-# If both date and priority are specified, an error message is generated. The search results are filtered based on the provided criteria, including finished status, date, priority, assignment status, and stitcher name. The final results are passed to the template for rendering along with any error messages.
-# stitcher status of all is no compatible with the stitcher name filter, so if stitcher is specified, assigned must be either yes or no. If assigned is all and stitcher is specified, the results will be filtered by stitcher name only. The final results are passed to the template for rendering along with any error messages.
-# if all parms are valid, the search results are filtered based on the provided criteria, including finished status, date, priority, assignment status, and stitcher name. The final results are passed to the template for rendering along with any error messages.
+# Shared helper used by both the initial HTML page view and the live JSON API.
+#  Extracts query parameters from the URL, validates filter combinations, scans
+#  the design directories, matches model stitchers from CSV, and applies assignment filters. Returns a dictionary containing the current form state, filtered results, and any validation error message. This allows both the initial page load and subsequent live searches to use the same logic for consistency.
+#  assignment filters.
 
-def search_view(request: HttpRequest) -> HttpResponse:
+def run_filtered_search(request: HttpRequest) -> dict[str, object]:
+
+  # 1. Read all 6 filter inputs from the URL query string (e.g., ?q=tree&finished=no)
   query = request.GET.get('q', '').strip()
   finished = request.GET.get('finished', 'both')
   date = request.GET.get('date', '').strip()
@@ -80,19 +82,22 @@ def search_view(request: HttpRequest) -> HttpResponse:
   stitcher = request.GET.get('stitcher', '').strip()
   error = ''
 
+  # 2. Validate mutually exclusive filter combinations before scanning folders
   if date and priority == 'yes':
     error = (
         'Cannot filter by a specific date (YYMMDD) and sort by oldest priority'
         ' at the same time.'
     )
     results = []
-  elif stitcher != "" and assigned == "all":
+  elif stitcher != '' and assigned == 'all':
     error = (
         'Cannot filter by stitcher name when assigned status is set to "all".'
-        ' Please select "Has Stitcher" for assigned status when filtering by stitcher name.'
+        ' Please select "Has Stitcher" for assigned status when filtering by'
+        ' stitcher name.'
     )
-    results = []    
+    results = []
   else:
+    # 3. Run the core directory scan and name/date/status filter
     results = web_search(
         query=query,
         search_finished=finished,
@@ -100,37 +105,56 @@ def search_view(request: HttpRequest) -> HttpResponse:
         search_priority=priority,
     )
 
+  # 4. Enrich matching results with model stitcher data from 'current wips.csv'
   if results:
     stitcher_lookup: dict[str, str] = get_stitcher_lookup()
     for item in results:
-      item['who_has'] = find_stitcher(
-          str(item.get('name', '')), stitcher_lookup
-      )
+      # Only attach a model stitcher if the project is an unfinished WIP
+      if not item.get('finished'):
+        item['who_has'] = find_stitcher(
+            str(item.get('name', '')), stitcher_lookup
+        )
+      else:
+        item['who_has'] = ''
 
+    # 5. Filter by whether a model stitcher is assigned ('yes' or 'no')
     if assigned == 'yes':
       results = [item for item in results if item.get('who_has')]
     elif assigned == 'no':
       results = [item for item in results if not item.get('who_has')]
 
+    # 6. Filter by partial stitcher name (case-insensitive)
     if stitcher:
       stitcher_lower = stitcher.lower()
       results = [
           item
           for item in results
-          if item.get('who_has') and stitcher_lower in item['who_has'].lower()
+          if item.get('who_has')
+          and stitcher_lower in str(item['who_has']).lower()
       ]
 
-  return render(
-      request,
-      'search_app/index.html',
-      {
-          'query': query,
-          'finished': finished,
-          'date': date,
-          'priority': priority,
-          'assigned': assigned,
-          'stitcher': stitcher,
-          'results': results,
-          'error': error,
-      },
-  )
+  # Return all form states, filtered records, and any validation error message
+  return {
+      'query': query,
+      'finished': finished,
+      'date': date,
+      'priority': priority,
+      'assigned': assigned,
+      'stitcher': stitcher,
+      'results': results,
+      'error': error,
+  }
+
+# Renders the initial full HTML5/CSS page when the app or browser first loads.
+
+def search_view(request: HttpRequest) -> HttpResponse:
+  context = run_filtered_search(request)
+  return render(request, 'search_app/index.html', context)
+
+# API endpoint called asynchronously by JavaScript fetch().
+# Returns raw JSON data instead of a full HTML page so the UI updates without
+# reloading.
+
+def api_search(request: HttpRequest) -> JsonResponse:
+  data = run_filtered_search(request)
+  return JsonResponse({'results': data['results'], 'error': data['error']})

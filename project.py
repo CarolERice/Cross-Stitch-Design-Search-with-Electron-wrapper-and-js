@@ -20,6 +20,7 @@ def add_project(folder: Path, is_finished: bool):
   projects[folder.name] = {
       'created_date': formatted_date,
       'finished': is_finished,
+      'path': str(folder),
   }
 
 # Recursive function to scan directories and add projects
@@ -113,6 +114,7 @@ def web_search(
           'name': name,
           'created_date': info['created_date'],
           'finished': info['finished'],
+          'path': info['path'],
       }
       for name, info in sorted_items
   ]

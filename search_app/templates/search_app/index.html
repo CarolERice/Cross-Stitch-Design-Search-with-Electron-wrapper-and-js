@@ -5,12 +5,12 @@
     <meta charset="UTF-8">
     <title>Cross Stitch Project Search</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" type="text/css" href="{% static 'search_app/style.css' %}?v=9">
+    <link rel="stylesheet" type="text/css" href="{% static 'search_app/style.css' %}?v=11">
 </head>
 <body>
     <h1>Cross Stitch Designs</h1>
 
-    <form method="GET" class="controls">
+    <form method="GET" id="searchForm" class="controls">
         <label>
             Project Name
             <input type="text" name="q" value="{{ query }}" placeholder="All projects...">
@@ -37,6 +37,7 @@
                 <option value="yes" {% if priority == 'yes' %}selected{% endif %}>Yes (Oldest First)</option>
             </select>
         </label>
+
         <label>
             Stitcher Status
             <select name="assigned">
@@ -45,6 +46,7 @@
                 <option value="no" {% if assigned == 'no' %}selected{% endif %}>No Stitcher</option>
             </select>
         </label>
+
         <label>
             Stitcher Name
             <input type="text" name="stitcher" value="{{ stitcher }}" placeholder="e.g. chr...">
@@ -52,29 +54,152 @@
 
         <div class="button-row">
             <button type="submit">Search</button>
+            <button type="button" id="resetBtn">Reset</button>
         </div>
     </form>
 
-    {% if error %}
-        <div class="error">{{ error }}</div>
-    {% endif %}
+    <div id="errorBox" class="error" {% if not error %}style="display: none;"{% endif %}>
+        {{ error }}
+    </div>
 
-    <p>Showing <strong>{{ results|length }}</strong> project{{ results|length|pluralize }}.</p>
+    <p id="resultCount">Showing <strong>{{ results|length }}</strong> project{{ results|length|pluralize }}.</p>
 
-    <div class="results">
+    <div id="resultsContainer" class="results">
         {% for item in results %}
             <div class="card">
                 <div class="project-name">{{ item.name }}</div>
                 <div class="project-meta">Created: {{ item.created_date }}</div>
                 <div class="project-meta">Status: {% if item.finished %}Finished{% else %}WIP{% endif %}</div>
-                {% if item.who_has %}
+                {% if not item.finished and item.who_has %}
                     <div class="project-meta">Who has it: {{ item.who_has }}</div>
                 {% endif %}
+                {% if not item.finished and item.path %}
+                    <button type="button" class="open-folder-btn" data-path="{{ item.path }}" onclick="openProjectFolder(this.dataset.path)">
+                        Open Folder
+                    </button>
+                {% endif %}
             </div>
-            {% empty %}
+        {% empty %}
             <div class="card">No matching cross-stitch projects found.</div>
         {% endfor %}
     </div>
 
+    
+    <script>
+        const searchForm = document.getElementById('searchForm');
+        const resetBtn = document.getElementById('resetBtn');
+        const errorBox = document.getElementById('errorBox');
+        const resultCount = document.getElementById('resultCount');
+        const resultsContainer = document.getElementById('resultsContainer');
+
+        let debounceTimer;
+
+        // Safely escape text so design names with '&' or '<' never break HTML
+        function escapeHTML(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function openProjectFolder(encodedPath) {
+            if (window.desktopAPI && encodedPath) {
+                window.desktopAPI.openFolder(decodeURIComponent(encodedPath));
+            }
+        }
+
+
+        // Read all 6 form fields automatically and fetch JSON from Django
+        async function runLiveSearch() {
+            const formData = new FormData(searchForm);
+            const params = new URLSearchParams(formData);
+
+            try {
+                const response = await fetch(`/api/search/?${params.toString()}`);
+                const data = await response.json();
+
+                // 1. Update validation error banner
+                if (data.error) {
+                    errorBox.textContent = data.error;
+                    errorBox.style.display = 'block';
+                } else {
+                    errorBox.textContent = '';
+                    errorBox.style.display = 'none';
+                }
+
+                // 2. Update project count with proper singular/plural
+                const count = data.results.length;
+                resultCount.innerHTML = `Showing <strong>${count}</strong> project${count === 1 ? '' : 's'}.`;
+
+                // 3. Render cards using your exact CSS classes
+                if (count === 0) {
+                    resultsContainer.innerHTML = '<div class="card">No matching cross-stitch projects found.</div>';
+                    return;
+                }
+
+                resultsContainer.innerHTML = data.results.map(item => {
+                    const statusText = item.finished ? 'Finished' : 'WIP';
+                    const stitcherLine = (!item.finished && item.who_has)
+                        ? `<div class="project-meta">Who has it: ${escapeHTML(item.who_has)}</div>`
+                        : '';
+                    const openBtn = (!item.finished && item.path)
+                        ? `<button type="button" class="open-folder-btn" data-path="${encodeURIComponent(item.path)}" onclick="openProjectFolder(this.dataset.path)">
+                               Open Folder
+                           </button>`
+                        : '';
+
+                    return `
+                        <div class="card">
+                            <div class="project-name">${escapeHTML(item.name)}</div>
+                            <div class="project-meta">Created: ${escapeHTML(item.created_date)}</div>
+                            <div class="project-meta">Status: ${statusText}</div>
+                            ${stitcherLine}
+                            ${openBtn}
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                errorBox.textContent = 'Error connecting to local Django search server.';
+                errorBox.style.display = 'block';
+            }
+        }
+
+        // Intercept form submission (pressing Enter or clicking Search) so page never reloads
+        searchForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            clearTimeout(debounceTimer);
+            runLiveSearch();
+        });
+
+        // Trigger instant search on dropdown changes, and debounced search on typing
+        searchForm.querySelectorAll('select').forEach(select => {
+            select.addEventListener('change', runLiveSearch);
+        });
+
+        searchForm.querySelectorAll('input[type="text"]').forEach(input => {
+            input.addEventListener('input', () => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(runLiveSearch, 200);
+            });
+        });
+
+        // Clear all filters back to defaults in one click
+        resetBtn.addEventListener('click', () => {
+            searchForm.reset();
+            searchForm.querySelector('input[name="q"]').value = '';
+            searchForm.querySelector('input[name="date"]').value = '';
+            searchForm.querySelector('input[name="stitcher"]').value = '';
+            searchForm.querySelector('select[name="finished"]').value = 'both';
+            searchForm.querySelector('select[name="priority"]').value = 'no';
+            searchForm.querySelector('select[name="assigned"]').value = 'all';
+            runLiveSearch();
+        });
+
+        // Hide initial server-rendered Open Folder buttons if not running inside Electron
+        if (!window.desktopAPI) {
+            document.querySelectorAll('.open-folder-btn').forEach(btn => btn.style.display = 'none');
+        }
+
+    </script>
 </body>
 </html>
+

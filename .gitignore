@@ -21,3 +21,5 @@ db.sqlite3-journal
 # Environment variables & secrets
 .env
 
+# js nodes_modules/
+node_modules/

@@ -77,8 +77,10 @@ form {
     flex-basis: 100%;
     display: flex;
     justify-content: center;
+    gap: 12px;
     margin-top: 8px;
 }
+
 
 /* Search button using your #1a365d navy and #010b0b / #010710 scheme */
 .controls .button-row button {
@@ -129,6 +131,24 @@ form {
 .project-meta {
     font-size: 13px;
     color: #010710;
+}
+
+.open-folder-btn {
+    margin-top: auto;
+    align-self: flex-start;
+    background-color: #164753;
+    color: #ffffff;
+    border: 2px solid #010710;
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.open-folder-btn:hover {
+    background-color: #010b0b;
+    border-color: #1a365d;
 }
 
 /* Standard scrollbar styling (works in Firefox and modern Chrome) */

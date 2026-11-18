@@ -1,8 +1,10 @@
 from django.contrib import admin
-from django.urls import path
-from search_app.views import search_view
+from django.urls import URLPattern, URLResolver, path
+from search_app import views
 
-urlpatterns = [
+urlpatterns: list[URLPattern | URLResolver] = [
     path('admin/', admin.site.urls),
-    path('', search_view, name='search'),
+    path('', views.search_view, name='search'),
+    path('api/search/', views.api_search, name='api_search'),
 ]
+
