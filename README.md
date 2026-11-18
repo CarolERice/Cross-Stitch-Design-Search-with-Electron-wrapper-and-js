@@ -1,5 +1,7 @@
 # Cross-Stitch Design Search Utility (Electron Desktop & Web)
 
+![Cross-Stitch Design Search Electron App Demo](demo.gif)
+
 A utility to read all the Cross-Stitch Designs I have created and search through them in a variety of ways. It pairs directory scanning with a CSV tracking sheet so I can quickly check design status and model stitcher assignments from my desktop app or phone browser.
 
 ## Features
